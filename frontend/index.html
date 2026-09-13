@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RoomSpec AI</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='3' y='14' width='26' height='15' fill='%23b4532a'/><rect x='3' y='3' width='26' height='8' fill='%231c1917'/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
+          },
+          colors: {
+            paper: '#f6f3ee',
+            ink: { DEFAULT: '#1c1917', soft: '#57534e', faint: '#a8a29e' },
+            rule: '#e2dcd3',
+            clay: { DEFAULT: '#b4532a', dark: '#8f3f1e', tint: '#f6e7de' },
+            pass: '#2f6f4f',
+            warn: '#a16207',
+            fail: '#b42318',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    body { background: #f6f3ee; }
+    .blueprint {
+      background-color: #fbfaf7;
+      background-image:
+        linear-gradient(#ece6dc 1px, transparent 1px),
+        linear-gradient(90deg, #ece6dc 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .num { font-variant-numeric: tabular-nums; }
+    input[type=number]::-webkit-inner-spin-button { opacity: .4; }
+    .dropzone.drag { border-color: #b4532a; background: #f6e7de; }
+    .stage.active .dot { background: #b4532a; box-shadow: 0 0 0 4px #f6e7de; }
+    .stage.done .dot { background: #1c1917; }
+    @keyframes pulse-bar { 0% { transform: translateX(-100%);} 100% { transform: translateX(250%);} }
+    .loading-bar::after { content: ''; position: absolute; inset: 0; width: 40%; background: #b4532a; animation: pulse-bar 1.1s ease-in-out infinite; }
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+    details[open] .chev { transform: rotate(90deg); }
+  </style>
+</head>
+<body class="font-sans text-ink antialiased">
+  <header class="border-b border-rule bg-paper/90 backdrop-blur sticky top-0 z-20">
+    <div class="mx-auto max-w-[1400px] px-5 h-14 flex items-center gap-4">
+      <div class="flex items-center gap-2.5">
+        <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="14" width="26" height="15" fill="#b4532a"/><rect x="3" y="3" width="26" height="8" fill="#1c1917"/></svg>
+        <span class="font-semibold tracking-tight">RoomSpec AI</span>
+        <span class="hidden sm:inline text-ink-soft text-sm">Dimension &amp; material specification engine</span>
+      </div>
+      <div class="ml-auto flex items-center gap-3 text-sm">
+        <span id="health" class="hidden md:inline-flex items-center gap-2 rounded-full border border-rule px-3 py-1 text-xs text-ink-soft font-mono">
+          <span class="h-1.5 w-1.5 rounded-full bg-ink-faint"></span>connecting…
+        </span>
+        <a href="/docs" class="rounded-md border border-ink px-3 py-1.5 font-medium hover:bg-ink hover:text-paper transition-colors">API docs</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-[1400px] px-5 py-6 grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
+    <!-- ============================== Inputs ============================== -->
+    <form id="spec-form" class="space-y-5 lg:sticky lg:top-20 lg:self-start" novalidate>
+      <section class="rounded-lg border border-rule bg-white">
+        <div class="px-4 pt-4 pb-3 flex items-baseline justify-between">
+          <h2 class="text-sm font-semibold">1 · Room photo</h2>
+          <span class="text-xs text-ink-faint">optional</span>
+        </div>
+        <div class="px-4 pb-4">
+          <label id="dropzone" class="dropzone relative block rounded-md border-2 border-dashed border-rule hover:border-ink-faint transition-colors cursor-pointer overflow-hidden">
+            <input id="image-input" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" />
+            <div id="drop-empty" class="py-8 px-4 text-center">
+              <svg class="mx-auto mb-2 text-ink-faint" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 16l4-4 4 4 3-3 5 5"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>
+              <p class="text-sm"><span class="font-medium text-clay">Upload a wall photo</span> or drop it here</p>
+              <p class="text-xs text-ink-faint mt-1">JPEG, PNG or WebP · up to 8 MB</p>
+            </div>
+            <div id="drop-preview" class="hidden relative">
+              <img id="preview-img" alt="Selected room photo" class="block w-full h-auto" />
+              <svg id="preview-overlay" class="absolute inset-0 w-full h-full pointer-events-none" preserveAspectRatio="none" viewBox="0 0 100 100"></svg>
+              <button type="button" id="clear-image" class="absolute top-2 right-2 rounded bg-ink/80 text-paper text-xs px-2 py-1 hover:bg-ink">Remove</button>
+            </div>
+          </label>
+          <p class="text-xs text-ink-soft mt-3 mb-2">Or try a sample room</p>
+          <div id="samples" class="grid grid-cols-5 gap-1.5"></div>
+        </div>
+      </section>
+
+      <section class="rounded-lg border border-rule bg-white p-4 space-y-4">
+        <h2 class="text-sm font-semibold">2 · Wall &amp; budget</h2>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-xs text-ink-soft">Wall run width</span>
+            <div class="mt-1 flex rounded-md border border-rule focus-within:border-ink">
+              <input id="max_width_cm" type="number" min="30" max="1200" step="1" value="240" required class="w-full rounded-l-md px-3 py-2 font-mono num outline-none" />
+              <span class="px-2.5 grid place-items-center text-xs text-ink-faint border-l border-rule">cm</span>
+            </div>
+          </label>
+          <label class="block">
+            <span class="text-xs text-ink-soft">Budget</span>
+            <div class="mt-1 flex rounded-md border border-rule focus-within:border-ink">
+              <span class="px-2.5 grid place-items-center text-xs text-ink-faint border-r border-rule">$</span>
+              <input id="budget_usd" type="number" min="50" step="50" value="1500" required class="w-full rounded-r-md px-3 py-2 font-mono num outline-none" />
+            </div>
+          </label>
+        </div>
+        <label class="block">
+          <span class="text-xs text-ink-soft">Cabinet finish</span>
+          <select id="finish_style" class="mt-1 w-full rounded-md border border-rule px-3 py-2 bg-white outline-none focus:border-ink">
+            <option value="">Match the photo / style</option>
+          </select>
+        </label>
+        <label class="block">
+          <span class="text-xs text-ink-soft">Style intent</span>
+          <input id="style_prompt" type="text" maxlength="300" placeholder="e.g. warm mid-century wood, minimal handles" class="mt-1 w-full rounded-md border border-rule px-3 py-2 outline-none focus:border-ink placeholder:text-ink-faint" />
+        </label>
+
+        <details class="group border-t border-rule pt-3">
+          <summary class="flex items-center gap-1.5 text-xs font-medium text-ink-soft hover:text-ink">
+            <svg class="chev transition-transform" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 6l6 6-6 6"/></svg>
+            Site constraints
+          </summary>
+          <div class="grid grid-cols-3 gap-2 mt-3">
+            <label class="block"><span class="text-[11px] text-ink-soft">Max depth</span>
+              <input id="max_depth_cm" type="number" min="10" max="120" placeholder="cm" class="mt-1 w-full rounded-md border border-rule px-2 py-1.5 font-mono num text-sm outline-none focus:border-ink placeholder:text-ink-faint" /></label>
+            <label class="block"><span class="text-[11px] text-ink-soft">Ceiling</span>
+              <input id="ceiling_height_cm" type="number" min="151" max="500" placeholder="cm" class="mt-1 w-full rounded-md border border-rule px-2 py-1.5 font-mono num text-sm outline-none focus:border-ink placeholder:text-ink-faint" /></label>
+            <label class="block"><span class="text-[11px] text-ink-soft">Front clearance</span>
+              <input id="front_clearance_cm" type="number" min="0" max="300" placeholder="cm" class="mt-1 w-full rounded-md border border-rule px-2 py-1.5 font-mono num text-sm outline-none focus:border-ink placeholder:text-ink-faint" /></label>
+          </div>
+          <div class="mt-3 space-y-2 text-sm">
+            <label class="flex items-center gap-2"><input id="include_wall_cabinets" type="checkbox" checked class="accent-[#b4532a]" /> Wall cabinets</label>
+            <label class="flex items-center gap-2"><input id="include_countertop" type="checkbox" checked class="accent-[#b4532a]" /> Countertop</label>
+            <label class="flex items-center gap-2"><input id="include_tall_units" type="checkbox" class="accent-[#b4532a]" /> Tall pantry unit</label>
+          </div>
+        </details>
+      </section>
+
+      <button id="submit" type="submit" class="w-full rounded-md bg-clay text-white font-medium py-3 hover:bg-clay-dark transition-colors disabled:opacity-60 disabled:cursor-wait">
+        Generate specification
+      </button>
+      <p id="form-error" class="hidden text-sm text-fail" role="alert"></p>
+    </form>
+
+    <!-- ============================== Results ============================== -->
+    <section id="results" aria-live="polite" class="min-w-0">
+      <div id="empty-state" class="rounded-lg border border-rule blueprint p-8 md:p-12">
+        <p class="text-xs font-mono uppercase tracking-widest text-clay">How it works</p>
+        <h1 class="mt-2 text-2xl md:text-3xl font-semibold tracking-tight max-w-xl">A cabinet run that fits the wall, the budget and the look, with every part number checked.</h1>
+        <ol class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4 text-sm">
+          <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">01</span><p class="font-medium mt-1">Read the photo</p><p class="text-ink-soft mt-1">OpenCV evens out lighting and finds the floor line, the wall corner and the camera tilt.</p></li>
+          <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">02</span><p class="font-medium mt-1">Match the style</p><p class="text-ink-soft mt-1">CLIP embeddings search Qdrant for modules that look like the room and your brief.</p></li>
+          <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">03</span><p class="font-medium mt-1">Enforce physics</p><p class="text-ink-soft mt-1">SQL filters width, depth, clearance and stock, then a solver fills the run within budget.</p></li>
+          <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">04</span><p class="font-medium mt-1">Write the spec</p><p class="text-ink-soft mt-1">An LLM writes the install notes from verified rows only. Any unverifiable output is rejected.</p></li>
+        </ol>
+      </div>
+
+      <div id="loading" class="hidden rounded-lg border border-rule bg-white p-8">
+        <div class="relative h-1 overflow-hidden rounded bg-rule loading-bar"></div>
+        <ol id="stages" class="mt-6 grid gap-3 sm:grid-cols-5 text-sm">
+          <li class="stage flex items-center gap-2"><span class="dot h-2 w-2 rounded-full bg-rule transition"></span>Preprocess</li>
+          <li class="stage flex items-center gap-2"><span class="dot h-2 w-2 rounded-full bg-rule transition"></span>Embed</li>
+          <li class="stage flex items-center gap-2"><span class="dot h-2 w-2 rounded-full bg-rule transition"></span>Vector + SQL</li>
+          <li class="stage flex items-center gap-2"><span class="dot h-2 w-2 rounded-full bg-rule transition"></span>Layout</li>
+          <li class="stage flex items-center gap-2"><span class="dot h-2 w-2 rounded-full bg-rule transition"></span>BOM</li>
+        </ol>
+      </div>
+
+      <div id="output" class="hidden space-y-5"></div>
+    </section>
+  </main>
+
+  <footer class="mx-auto max-w-[1400px] px-5 pb-8 text-xs text-ink-faint">
+    Prices, dimensions and stock come from the catalog database. Measure on site before you order.
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

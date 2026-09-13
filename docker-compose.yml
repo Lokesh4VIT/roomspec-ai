@@ -1,0 +1,43 @@
+# Local stack mirroring production: PostgreSQL (Neon/Supabase stand-in) + Qdrant + API.
+#   docker compose up --build        -> http://localhost:8000
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: roomspec
+      POSTGRES_PASSWORD: roomspec
+      POSTGRES_DB: roomspec
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roomspec"]
+      interval: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports: ["6333:6333"]
+    volumes: ["qdrant:/qdrant/storage"]
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        WITH_CLIP: ${WITH_CLIP:-true}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://roomspec:roomspec@postgres:5432/roomspec
+      QDRANT_URL: http://qdrant:6333
+    ports: ["8000:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+volumes:
+  pgdata:
+  qdrant:

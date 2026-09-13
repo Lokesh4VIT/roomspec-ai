@@ -1,0 +1,23 @@
+# Render Blueprint (free tier, 512 MB RAM): hash embeddings keep memory well under the limit.
+# Use Hugging Face Spaces (16 GB RAM CPU) if you want CLIP in production.
+services:
+  - type: web
+    name: roomspec-ai
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: WITH_CLIP
+        value: "false"
+      - key: EMBEDDING_BACKEND
+        value: hash
+      - key: DATABASE_URL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

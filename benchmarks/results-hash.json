@@ -1,0 +1,44 @@
+{
+  "backend": "hash",
+  "machine": "Darwin arm64 \u00b7 Python 3.12.12",
+  "catalog_rows": 176,
+  "setup_seconds": 0.06,
+  "dimension_compliance": {
+    "scenarios": 100,
+    "baseline_keyword_top5_set_compliant": 0.24,
+    "baseline_keyword_item_compliant": 0.638,
+    "engine_plan_compliant": 1.0,
+    "engine_item_compliant": 1.0,
+    "engine_infeasible_scenarios": 29
+  },
+  "style_precision_at_5": {
+    "text_queries": 24,
+    "baseline_keyword": 0.8083333333333332,
+    "engine_text": 0.7999999999999999,
+    "image_samples": 5,
+    "engine_image_finish_accuracy": 0.8
+  },
+  "latency_ms": {
+    "cv": {
+      "p50": 41.26,
+      "p95": 42.05,
+      "n": 50
+    },
+    "vector_sql": {
+      "p50": 11.06,
+      "p95": 11.31,
+      "n": 50
+    },
+    "e2e_api": {
+      "p50": 54.48,
+      "p95": 55.18,
+      "n": 50
+    }
+  },
+  "latency_notes": "LLM provider: none; e2e excludes network LLM latency when 'none'. Vector store is embedded in-memory Qdrant and SQLite, so no network round-trips are included.",
+  "bom_hallucination": {
+    "bom_lines_mismatching_sql": 0,
+    "narratives_failing_grounding_check": 0,
+    "scenarios": 100
+  }
+}
