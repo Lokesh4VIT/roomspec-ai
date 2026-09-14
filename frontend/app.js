@@ -2,7 +2,7 @@
 (() => {
   'use strict';
 
-  const API = '/api/v1';
+  const API = '[https://roomspec-backend.onrender.com/api/v1](https://roomspec-backend.onrender.com/api/v1)';
   const $ = (id) => document.getElementById(id);
   const state = { file: null, sampleUrl: null, lastResult: null, stageTimer: null };
 
