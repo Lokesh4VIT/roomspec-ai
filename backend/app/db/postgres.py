@@ -108,6 +108,15 @@ def upsert_modules(rows: Iterable[dict[str, Any]], engine: Engine | None = None)
     return len(rows)
 
 
+def update_module(part_id: str, values: dict[str, Any], engine: Engine | None = None) -> dict[str, Any] | None:
+    if values:
+        stmt = cabinet_modules.update().where(cabinet_modules.c.part_id == part_id).values(**values)
+        with (engine or get_engine()).begin() as conn:
+            if conn.execute(stmt).rowcount == 0:
+                return None
+    return get_modules_by_ids([part_id], engine=engine).get(part_id)
+
+
 def count_modules(engine: Engine | None = None) -> int:
     with (engine or get_engine()).connect() as conn:
         return conn.execute(select(func.count()).select_from(cabinet_modules)).scalar_one()

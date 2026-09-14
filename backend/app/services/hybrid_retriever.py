@@ -48,6 +48,8 @@ class RetrievalResult:
     candidates_considered: int
     modules: dict[str, list[dict]] = field(default_factory=dict)  # group -> compliant rows
     scores: dict[str, float] = field(default_factory=dict)  # part_id -> fused style score in [0, 1]
+    finish_ranking: list[tuple[str, float]] = field(default_factory=list)  # compliant finishes, best first
+    countertop_rows: list[dict] = field(default_factory=list)
     timings_ms: dict[str, float] = field(default_factory=dict)
 
     @property
@@ -122,14 +124,37 @@ def index_catalog(rows: list[dict] | None = None, embedder: Embedder | None = No
     return len(rows)
 
 
-def _resolve_finish(rows: list[dict], scores: dict[str, float]) -> str | None:
-    """Pick one coherent finish: the one whose best modules score highest on average."""
+def _rank_finishes(rows: list[dict], scores: dict[str, float]) -> list[tuple[str, float]]:
+    """Rank finishes by the mean fused score of their best five modules."""
     by_finish: dict[str, list[float]] = defaultdict(list)
     for r in rows:
         by_finish[r["finish_style"]].append(scores.get(r["part_id"], 0.0))
-    if not by_finish:
-        return None
-    return max(by_finish, key=lambda f: float(np.mean(sorted(by_finish[f], reverse=True)[:5])))
+    ranked = [(f, float(np.mean(sorted(v, reverse=True)[:5]))) for f, v in by_finish.items()]
+    return sorted(ranked, key=lambda fs: (-fs[1], fs[0]))
+
+
+def cabinet_modules_for_finish(c: DesignConstraints, finish: str) -> dict[str, list[dict]]:
+    """Every compliant cabinet row in one finish, grouped for the layout solver.
+
+    Uses the whole catalog for that finish, not just the vector top-k, so the solver is
+    never limited by which widths happened to rank highly.
+    """
+    rows = postgres.filter_modules(
+        categories=CABINET_CATEGORIES,
+        finish_style=finish,
+        max_width_cm=c.max_width_cm,
+        max_depth_cm=c.max_depth_cm,
+        max_price_usd=c.budget_usd,
+        in_stock_only=True,
+    )
+    if c.front_clearance_cm is not None:
+        rows = [r for r in rows if r["door_clearance_cm"] <= c.front_clearance_cm]
+    return {
+        "base": [r for r in rows if r["category"] in BASE_RUN_CATEGORIES],
+        "filler": [r for r in rows if r["category"] in FILLER_CATEGORIES],
+        "wall": [r for r in rows if r["category"] in WALL_CATEGORIES] if c.include_wall_cabinets else [],
+        "tall": [r for r in rows if r["category"] in TALL_CATEGORIES] if c.include_tall_units else [],
+    }
 
 
 def retrieve_for_layout(c: DesignConstraints, query: StyleQuery, top_k: int | None = None) -> RetrievalResult:
@@ -147,64 +172,53 @@ def retrieve_for_layout(c: DesignConstraints, query: StyleQuery, top_k: int | No
     timings["vector_search"] = (time.perf_counter() - t0) * 1000
 
     scores = {pid: sc for gs in group_scores.values() for pid, sc in gs.items()}
-    considered = len(scores)
 
     t0 = time.perf_counter()
     common = dict(max_depth_cm=c.max_depth_cm, in_stock_only=True)
-    # Hard SQL filter on the vector candidates. Finish is resolved on cabinets first so the
-    # whole run shares one finish; countertops resolve their own material.
-    cab_ids = [pid for g in ("base", "wall", "tall") for pid in group_scores[g]]
-    cab_rows = postgres.filter_modules(
-        part_ids=cab_ids,
+    # Rank finishes using only vector candidates that also pass the hard constraints, so a
+    # finish that looks right but has nothing that fits cannot win.
+    base_candidates = postgres.filter_modules(
+        part_ids=list(group_scores["base"]),
+        categories=BASE_RUN_CATEGORIES,
         max_width_cm=c.max_width_cm,
         max_price_usd=c.budget_usd,
-        finish_style=c.finish_style,
         **common,
     )
     if c.front_clearance_cm is not None:
-        cab_rows = [r for r in cab_rows if r["door_clearance_cm"] <= c.front_clearance_cm]
+        base_candidates = [r for r in base_candidates if r["door_clearance_cm"] <= c.front_clearance_cm]
+    ranking = _rank_finishes(base_candidates, scores)
 
-    finish = c.finish_style or _resolve_finish([r for r in cab_rows if r["category"] in BASE_RUN_CATEGORIES], scores)
+    finish = c.finish_style or (ranking[0][0] if ranking else None)
+    modules: dict[str, list[dict]] = {"base": [], "filler": [], "wall": [], "tall": []}
     if finish:
-        # Canonical casing from the catalog; widen to every compliant width in that finish so
-        # the layout solver is not limited by which widths happened to land in the top-k.
-        finish = next((r["finish_style"] for r in cab_rows if r["finish_style"].lower() == finish.lower()), finish)
-        cab_rows = postgres.filter_modules(
-            categories=CABINET_CATEGORIES,
-            finish_style=finish,
-            max_width_cm=c.max_width_cm,
-            max_price_usd=c.budget_usd,
-            **common,
-        )
-        if c.front_clearance_cm is not None:
-            cab_rows = [r for r in cab_rows if r["door_clearance_cm"] <= c.front_clearance_cm]
+        modules = cabinet_modules_for_finish(c, finish)
+        # Canonical casing from the catalog when the user typed the finish.
+        finish = next((r["finish_style"] for rows in modules.values() for r in rows), finish)
 
-    ct_rows = (
-        postgres.filter_modules(part_ids=list(group_scores["countertop"]), max_price_usd=c.budget_usd, **common)
-        if c.include_countertop
-        else []
-    )
-    ct_finish = _resolve_finish(ct_rows, scores)
-    if ct_finish:
-        ct_rows = postgres.filter_modules(
-            categories=COUNTERTOP_CATEGORIES, finish_style=ct_finish, max_price_usd=c.budget_usd, **common
+    ct_rows: list[dict] = []
+    ct_finish = None
+    if c.include_countertop:
+        ct_candidates = postgres.filter_modules(
+            part_ids=list(group_scores["countertop"]), max_price_usd=c.budget_usd, **common
         )
+        ct_ranking = _rank_finishes(ct_candidates, scores)
+        if ct_ranking:
+            ct_finish = ct_ranking[0][0]
+            ct_rows = postgres.filter_modules(
+                categories=COUNTERTOP_CATEGORIES, finish_style=ct_finish, max_price_usd=c.budget_usd, **common
+            )
+    modules["countertop"] = ct_rows
     timings["sql_filter"] = (time.perf_counter() - t0) * 1000
 
-    modules = {
-        "base": [r for r in cab_rows if r["category"] in BASE_RUN_CATEGORIES],
-        "filler": [r for r in cab_rows if r["category"] in FILLER_CATEGORIES],
-        "wall": [r for r in cab_rows if r["category"] in WALL_CATEGORIES] if c.include_wall_cabinets else [],
-        "tall": [r for r in cab_rows if r["category"] in TALL_CATEGORIES] if c.include_tall_units else [],
-        "countertop": ct_rows,
-    }
     return RetrievalResult(
         query_text=query.text,
         finish_style=finish,
         countertop_finish=ct_finish,
-        candidates_considered=considered,
+        candidates_considered=len(scores),
         modules=modules,
         scores=scores,
+        finish_ranking=ranking,
+        countertop_rows=ct_rows,
         timings_ms=timings,
     )
 

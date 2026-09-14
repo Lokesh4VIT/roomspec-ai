@@ -2,7 +2,7 @@
   "backend": "clip",
   "machine": "Darwin arm64 \u00b7 Python 3.12.12",
   "catalog_rows": 176,
-  "setup_seconds": 8.01,
+  "setup_seconds": 7.85,
   "dimension_compliance": {
     "scenarios": 100,
     "baseline_keyword_top5_set_compliant": 0.24,
@@ -20,23 +20,23 @@
   },
   "latency_ms": {
     "cv": {
-      "p50": 41.2,
-      "p95": 42.1,
+      "p50": 40.8,
+      "p95": 43.05,
       "n": 50
     },
     "embed_image": {
-      "p50": 22.19,
-      "p95": 22.48,
+      "p50": 21.07,
+      "p95": 26.8,
       "n": 50
     },
     "vector_sql": {
-      "p50": 16.53,
-      "p95": 16.7,
+      "p50": 15.94,
+      "p95": 16.86,
       "n": 50
     },
     "e2e_api": {
-      "p50": 90.13,
-      "p95": 90.99,
+      "p50": 90.85,
+      "p95": 103.46,
       "n": 50
     }
   },

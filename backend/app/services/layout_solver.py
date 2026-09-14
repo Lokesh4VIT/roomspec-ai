@@ -23,6 +23,7 @@ from app.schemas.spec import ComplianceCheck, DesignConstraints
 PLINTH_CM = 15.0
 BACKSPLASH_GAP_CM = 55.0
 MAX_FILLER_GAP_CM = 20
+WALL_COVER_TOLERANCE_CM = 30  # upper run may stop this short of the base run and still count as covering it
 INF = math.inf
 
 
@@ -178,7 +179,11 @@ def solve_layout(c: DesignConstraints, modules: dict[str, list[dict]]) -> Layout
                 total = subtotal + wall_cost[wall_fill]
                 filled = run + sum(_w(r) for r in fill_rows)
 
-                key = (ct_ok, filled, tall is not None, sink is not None, wall_fill, -total)
+                if c.layout_priority == "complete_kitchen":
+                    uppers_cover = not walls or wall_fill >= run_base - WALL_COVER_TOLERANCE_CM
+                    key = (ct_ok, uppers_cover, filled, tall is not None, sink is not None, wall_fill, -total)
+                else:
+                    key = (ct_ok, filled, tall is not None, sink is not None, wall_fill, -total)
                 if best_key is None or key > best_key:
                     best_key = key
                     best = (tall, sink, bw, ct_ok, fill_rows, wall_fill, total)
@@ -229,7 +234,7 @@ def solve_layout(c: DesignConstraints, modules: dict[str, list[dict]]) -> Layout
     if c.include_countertop and run_base_width > 0 and not ct_ok:
         status = "partial"
         notes.append("No compliant countertop could be added within budget and stock.")
-    if c.include_wall_cabinets and walls and wall_fill < run_base_width - 30:
+    if c.include_wall_cabinets and walls and wall_fill < run_base_width - WALL_COVER_TOLERANCE_CM:
         status = "partial"
         notes.append(
             f"Wall cabinets cover {wall_fill} of {run_base_width:.0f} cm; budget or stock limited the upper run."

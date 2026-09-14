@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from app.core.config import get_settings
-from app.db import postgres, qdrant
+from app.db import postgres, qdrant, spec_store  # noqa: F401  (spec_store registers its table)
 
 log = logging.getLogger(__name__)
 

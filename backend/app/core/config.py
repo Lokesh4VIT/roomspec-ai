@@ -41,7 +41,18 @@ class Settings(BaseSettings):
 
     # Retrieval / upload limits.
     vector_top_k: int = Field(default=40, ge=1, le=200)
+    max_alternatives: int = Field(default=3, ge=0, le=7)
     max_upload_mb: float = 8.0
+
+    # Saved specifications (shareable links). Photos are never stored, only analysis results.
+    save_specs: bool = True
+
+    # Security (all off by default). Comma-separated values.
+    api_keys: str = ""  # required as X-API-Key on /spec, /bom and /search when set
+    admin_api_keys: str = ""  # enables /api/v1/admin/* when set
+    cors_origins: str = "*"
+    rate_limit_per_minute: int = Field(default=0, ge=0)  # per client on compute endpoints; 0 = unlimited
+    metrics_enabled: bool = True
     auto_seed: bool = True
     seed_file: Path = REPO_ROOT / "data" / "seed_modules.json"
     frontend_dir: Path = REPO_ROOT / "frontend"

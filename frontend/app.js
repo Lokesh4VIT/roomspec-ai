@@ -14,10 +14,98 @@
   // ------------------------------------------------------------------ bootstrap
   async function init() {
     loadHealth();
-    loadFacets();
+    const facets = loadFacets();
     loadSamples();
     bindUpload();
     $('spec-form').addEventListener('submit', onSubmit);
+    $('api-key').value = storage.get('roomspec.apiKey') || '';
+    $('api-key').addEventListener('change', () => storage.set('roomspec.apiKey', $('api-key').value.trim()));
+    window.addEventListener('popstate', () => openFromUrl());
+    await facets; // the finish <select> must have its options before a saved spec fills it in
+    if (!(await openFromUrl())) loadRecent();
+  }
+
+  // localStorage can throw (private mode, blocked site data): never let that break the app.
+  const storage = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch { /* ignore */ } },
+  };
+
+  async function apiFetch(path, options = {}) {
+    const key = storage.get('roomspec.apiKey');
+    const headers = { ...(options.headers || {}), ...(key ? { 'X-API-Key': key } : {}) };
+    const res = await fetch(`${API}${path}`, { ...options, headers });
+    if (res.status === 401) $('api-key-section').classList.remove('hidden');
+    return res;
+  }
+
+  // ------------------------------------------------------------------ saved specs
+  async function openFromUrl() {
+    const id = new URLSearchParams(location.search).get('spec');
+    if (!id) return false;
+    try {
+      const res = await apiFetch(`/specs/${encodeURIComponent(id)}`);
+      if (!res.ok) throw new Error(res.status === 404 ? 'That shared specification no longer exists.' : formatApiError(await res.json()));
+      const spec = await res.json();
+      applyConstraints(spec.constraints);
+      state.lastResult = spec;
+      $('empty-state').classList.add('hidden');
+      render(spec, { shared: true });
+      return true;
+    } catch (ex) {
+      showError(ex.message || 'Could not load the shared specification.');
+      return false;
+    }
+  }
+
+  async function loadRecent() {
+    try {
+      const res = await apiFetch('/specs?limit=6');
+      if (!res.ok) return;
+      const runs = await res.json();
+      if (!runs.length) return;
+      $('recent-list').innerHTML = runs.map((r) => `
+        <li><a href="?spec=${esc(r.request_id)}" data-spec="${esc(r.request_id)}" class="recent-link flex items-center gap-3 rounded-md border border-rule bg-white/80 px-3 py-2 hover:border-ink">
+          <span class="h-2 w-2 shrink-0 rounded-full ${r.status === 'ok' ? 'bg-pass' : r.status === 'partial' ? 'bg-warn' : 'bg-fail'}"></span>
+          <span class="min-w-0 flex-1 truncate text-sm">${esc(r.finish_style || 'No fit')} · ${cm(r.max_width_cm)}</span>
+          <span class="font-mono num text-xs">${usd(r.total_usd)}</span>
+          <span class="text-xs text-ink-faint whitespace-nowrap">${r.created_at ? timeAgo(r.created_at) : ''}</span>
+        </a></li>`).join('');
+      $('recent-list').querySelectorAll('.recent-link').forEach((a) => a.addEventListener('click', (e) => {
+        e.preventDefault();
+        history.pushState(null, '', `?spec=${a.dataset.spec}`);
+        openFromUrl();
+      }));
+      $('recent').classList.remove('hidden');
+    } catch { /* recent list is optional */ }
+  }
+
+  function timeAgo(iso) {
+    // SQLite returns naive UTC timestamps; treat a missing offset as UTC.
+    const t = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`).getTime();
+    const s = Math.max(0, (Date.now() - t) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+    return `${Math.floor(s / 86400)} d ago`;
+  }
+
+  function applyConstraints(c) {
+    const set = (id, v) => { $(id).value = v ?? ''; };
+    set('max_width_cm', c.max_width_cm);
+    set('budget_usd', c.budget_usd);
+    set('style_prompt', c.style_prompt);
+    set('max_depth_cm', c.max_depth_cm);
+    set('ceiling_height_cm', c.ceiling_height_cm);
+    set('front_clearance_cm', c.front_clearance_cm);
+    const sel = $('finish_style');
+    if (c.finish_style && ![...sel.options].some((o) => o.value === c.finish_style)) sel.add(new Option(c.finish_style, c.finish_style));
+    sel.value = c.finish_style || '';
+    $('include_wall_cabinets').checked = c.include_wall_cabinets;
+    $('include_countertop').checked = c.include_countertop;
+    $('include_tall_units').checked = c.include_tall_units;
+    const radio = document.querySelector(`input[name="layout_priority"][value="${c.layout_priority || 'fill_width'}"]`);
+    if (radio) radio.checked = true;
   }
 
   async function loadHealth() {
@@ -136,6 +224,7 @@
       include_wall_cabinets: $('include_wall_cabinets').checked,
       include_countertop: $('include_countertop').checked,
       include_tall_units: $('include_tall_units').checked,
+      layout_priority: document.querySelector('input[name="layout_priority"]:checked')?.value || 'fill_width',
     };
     Object.keys(c).forEach((k) => c[k] === null && delete c[k]);
     return c;
@@ -161,11 +250,17 @@
 
     setLoading(true);
     try {
-      const res = await fetch(`${API}/spec`, { method: 'POST', body });
+      const res = await apiFetch('/spec', { method: 'POST', body });
       const data = await res.json();
+      if (res.status === 429) {
+        throw new Error(`Too many requests. Try again in ${res.headers.get('Retry-After') || 'a few'} seconds.`);
+      }
       if (!res.ok) throw new Error(formatApiError(data));
       state.lastResult = data;
+      $('api-key-section').classList.add('hidden');
       render(data);
+      // Every result is saved server-side, so the address bar becomes its share link.
+      history.pushState(null, '', `?spec=${data.request_id}`);
     } catch (ex) {
       showError(ex.message || 'Request failed.');
       $('empty-state').classList.toggle('hidden', !!state.lastResult);
@@ -214,19 +309,30 @@
   }
 
   // ------------------------------------------------------------------ render
-  function render(r) {
-    drawOverlay(r.image_analysis);
+  function render(r, { shared = false } = {}) {
+    if (!shared) drawOverlay(r.image_analysis);
     const out = $('output');
     out.innerHTML = [
+      renderPrintHeader(r),
+      shared ? `<p class="no-print rounded-md border border-rule bg-white px-4 py-2 text-sm text-ink-soft">Saved specification <span class="font-mono">${esc(r.request_id)}</span>. Change any input and generate again to update it.</p>` : '',
       renderHeader(r),
+      renderAlternatives(r),
       renderElevation(r),
       renderBOM(r),
       `<div class="grid gap-5 xl:grid-cols-2">${renderNotes(r)}${renderCompliance(r)}</div>`,
-      `<div class="grid gap-5 xl:grid-cols-2">${renderAnalysis(r)}${renderTimings(r)}</div>`,
+      `<div class="no-print grid gap-5 xl:grid-cols-2">${renderAnalysis(r)}${renderTimings(r)}</div>`,
     ].join('');
     out.classList.remove('hidden');
     $('export-csv')?.addEventListener('click', () => exportCSV(r));
     $('copy-json')?.addEventListener('click', (e) => copyJSON(r, e.currentTarget));
+    $('share-link')?.addEventListener('click', (e) => copyShareLink(r, e.currentTarget));
+    $('print-quote')?.addEventListener('click', () => window.print());
+    out.querySelectorAll('.use-finish').forEach((btn) => btn.addEventListener('click', () => {
+      const sel = $('finish_style');
+      if (![...sel.options].some((o) => o.value === btn.dataset.finish)) sel.add(new Option(btn.dataset.finish, btn.dataset.finish));
+      sel.value = btn.dataset.finish;
+      $('spec-form').requestSubmit();
+    }));
     if (window.matchMedia('(max-width: 1023px)').matches) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -249,6 +355,10 @@
           <p class="text-sm text-ink-soft">${esc(sub)}</p>
           <p class="mt-1 text-[15px] leading-relaxed">${esc(r.summary)}</p>
         </div>
+        <div class="no-print flex gap-2">
+          <button id="share-link" type="button" class="rounded-md border border-rule px-2.5 py-1 text-xs hover:border-ink">Copy share link</button>
+          <button id="print-quote" type="button" class="rounded-md border border-ink px-2.5 py-1 text-xs font-medium hover:bg-ink hover:text-paper">Print / PDF</button>
+        </div>
       </div>
       <dl class="mt-5 grid grid-cols-2 md:grid-cols-4 gap-4 border-t border-rule pt-4">
         ${stat('Total', usd(r.total_usd))}
@@ -260,6 +370,57 @@
         <div class="flex justify-between text-xs text-ink-soft"><span>Budget used</span><span class="font-mono num">${usd(r.total_usd)} of ${usd(c.budget_usd)}</span></div>
         <div class="mt-1 h-1.5 rounded bg-rule overflow-hidden"><div class="h-full bg-ink" style="width:${pct}%"></div></div>
       </div>
+    </section>`;
+  }
+
+  function renderPrintHeader(r) {
+    const c = r.constraints;
+    const extras = [
+      c.max_depth_cm && `max depth ${cm(c.max_depth_cm)}`,
+      c.ceiling_height_cm && `ceiling ${cm(c.ceiling_height_cm)}`,
+      c.front_clearance_cm != null && `front clearance ${cm(c.front_clearance_cm)}`,
+      c.layout_priority === 'complete_kitchen' && 'priority: complete kitchen',
+    ].filter(Boolean).join(' · ');
+    return `
+    <div class="print-only border-b-2 border-ink pb-3 mb-3">
+      <div class="flex justify-between items-baseline">
+        <p class="text-lg font-semibold">RoomSpec AI · Cabinet specification &amp; quote</p>
+        <p class="font-mono text-xs">${esc(r.request_id)} · ${new Date().toLocaleDateString()}</p>
+      </div>
+      <p class="mt-1 text-xs">Wall ${cm(c.max_width_cm)} · budget ${usd(c.budget_usd)}${c.style_prompt ? ` · “${esc(c.style_prompt)}”` : ''}${extras ? ` · ${extras}` : ''}</p>
+      <p class="mt-1 text-xs text-ink-soft">Share: ${esc(location.origin)}/?spec=${esc(r.request_id)}</p>
+    </div>`;
+  }
+
+  function renderAlternatives(r) {
+    if (!r.alternatives || !r.alternatives.length) return '';
+    const cards = r.alternatives.map((a) => {
+      const delta = a.total_usd - r.total_usd;
+      const deltaText = r.bom.length ? `${delta >= 0 ? '+' : '−'}${usd(Math.abs(delta))}` : '';
+      return `
+      <li class="flex flex-col rounded-md border border-rule p-3">
+        <div class="flex items-center gap-2">
+          <span class="h-6 w-6 shrink-0 rounded border border-rule" style="background:${esc(a.swatch_hex)}"></span>
+          <span class="min-w-0 truncate text-sm font-medium">${esc(a.finish_style)}</span>
+          ${a.status === 'partial' ? '<span class="ml-auto rounded bg-warn px-1.5 text-[10px] text-white">partial</span>' : ''}
+        </div>
+        <dl class="mt-2 grid grid-cols-2 gap-x-2 text-xs">
+          <dt class="text-ink-soft">Total</dt><dd class="text-right font-mono num">${usd(a.total_usd)}</dd>
+          <dt class="text-ink-soft">vs current</dt><dd class="text-right font-mono num ${delta > 0 ? 'text-warn' : 'text-pass'}">${deltaText}</dd>
+          <dt class="text-ink-soft">Run</dt><dd class="text-right font-mono num">${cm(a.run_width_cm)}</dd>
+          <dt class="text-ink-soft">Style match</dt><dd class="text-right font-mono num">${Math.round(a.style_score * 100)}%</dd>
+        </dl>
+        <button type="button" data-finish="${esc(a.finish_style)}" class="use-finish no-print mt-3 rounded-md border border-ink px-2 py-1 text-xs font-medium hover:bg-ink hover:text-paper">Use this finish</button>
+      </li>`;
+    }).join('');
+    const current = r.finish_style_score != null ? ` · current finish ${Math.round(r.finish_style_score * 100)}% match` : '';
+    return `
+    <section class="rounded-lg border border-rule bg-white p-5">
+      <div class="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="text-sm font-semibold">Alternatives</h2>
+        <span class="text-xs text-ink-soft">Same wall and budget in other finishes${current}</span>
+      </div>
+      <ul class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">${cards}</ul>
     </section>`;
   }
 
@@ -391,7 +552,7 @@
       <div class="flex flex-wrap items-center gap-2 px-5 pt-4 pb-3">
         <h2 class="text-sm font-semibold">Bill of materials</h2>
         <span class="text-xs text-ink-soft">${r.bom.reduce((s, l) => s + l.quantity, 0)} units · ${r.candidates_compliant} compliant of ${r.candidates_considered} retrieved</span>
-        <div class="ml-auto flex gap-2">
+        <div class="no-print ml-auto flex gap-2">
           <button id="copy-json" type="button" class="rounded-md border border-rule px-2.5 py-1 text-xs hover:border-ink">Copy JSON</button>
           <button id="export-csv" type="button" class="rounded-md border border-ink px-2.5 py-1 text-xs font-medium hover:bg-ink hover:text-paper">Export CSV</button>
         </div>
@@ -482,7 +643,7 @@
     const t = { ...r.timings_ms };
     const total = t.total || 1;
     delete t.total;
-    const labels = { cv_preprocess: 'OpenCV preprocess', embedding: 'Embedding', vector_search: 'Qdrant search', sql_filter: 'SQL filter', layout_solver: 'Layout solver', bom_generation: 'BOM + notes' };
+    const labels = { cv_preprocess: 'OpenCV preprocess', embedding: 'Embedding', vector_search: 'Qdrant search', sql_filter: 'SQL filter', layout_solver: 'Layout solver', bom_generation: 'BOM + notes', alternatives: 'Alternatives' };
     const bars = Object.entries(t).map(([k, v]) => `
       <div class="grid grid-cols-[120px_1fr_64px] items-center gap-3 py-1">
         <span class="text-xs text-ink-soft">${esc(labels[k] || k)}</span>
@@ -507,6 +668,17 @@
     const a = Object.assign(document.createElement('a'), { href: url, download: `roomspec-bom-${r.request_id}.csv` });
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function copyShareLink(r, btn) {
+    const url = `${location.origin}/?spec=${r.request_id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      btn.textContent = 'Link copied';
+    } catch {
+      window.prompt('Copy this link', url);
+    }
+    setTimeout(() => (btn.textContent = 'Copy share link'), 1500);
   }
 
   async function copyJSON(r, btn) {

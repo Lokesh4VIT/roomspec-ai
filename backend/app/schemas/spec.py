@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -26,6 +27,13 @@ class DesignConstraints(BaseModel):
     include_wall_cabinets: bool = True
     include_countertop: bool = True
     include_tall_units: bool = False
+    layout_priority: Literal["fill_width", "complete_kitchen"] = Field(
+        "fill_width",
+        description=(
+            "fill_width: use as much of the wall as possible, then add upper cabinets with the remaining budget. "
+            "complete_kitchen: prefer a narrower run whose upper cabinets cover it when the budget cannot do both."
+        ),
+    )
 
     @field_validator("finish_style", "style_prompt")
     @classmethod
@@ -117,12 +125,27 @@ class HallucinationReport(BaseModel):
     fallback_reason: str | None = None
 
 
+class AlternativePlan(BaseModel):
+    """Best layout in another finish, solved under the same constraints for comparison."""
+
+    finish_style: str
+    swatch_hex: str
+    style_score: float = Field(description="Fused style score of the finish, 0-1 (higher = closer to the brief)")
+    status: Literal["ok", "partial"]
+    total_usd: float
+    run_width_cm: float
+    wall_gap_cm: float
+    units: int
+    part_ids: list[str]
+
+
 class SpecResponse(BaseModel):
     request_id: str
     constraints: DesignConstraints
     image_analysis: ImageAnalysis | None
     query_text: str
     finish_style_resolved: str | None
+    finish_style_score: float | None = None
     candidates_considered: int
     candidates_compliant: int
     bom: list[BOMLine]
@@ -136,6 +159,60 @@ class SpecResponse(BaseModel):
     hallucination_check: HallucinationReport
     timings_ms: dict[str, float]
     status: Literal["ok", "partial", "infeasible"]
+    alternatives: list[AlternativePlan] = []
+
+
+class SpecRunSummary(BaseModel):
+    request_id: str
+    created_at: datetime | None
+    status: str
+    finish_style: str | None
+    total_usd: float
+    max_width_cm: float
+    budget_usd: float
+    had_image: bool
+
+
+class CatalogPatch(BaseModel):
+    """Fields an operator changes day to day; both are read from SQL per request (no reindex needed)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    price_usd: float | None = Field(None, ge=0, le=1_000_000)
+    in_stock: bool | None = None
+
+
+class CatalogItem(BaseModel):
+    """A catalog row for bulk upsert. Text fields feed the embeddings, so upserts re-index."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    part_id: str = Field(..., min_length=3, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+    part_name: str = Field(..., min_length=1, max_length=255)
+    category: str = Field(..., min_length=1, max_length=64)
+    finish_style: str = Field(..., min_length=1, max_length=64)
+    material: str = Field("", max_length=128)
+    price_usd: float = Field(..., ge=0, le=1_000_000)
+    width_cm: float = Field(..., gt=0, le=1000)
+    height_cm: float = Field(..., gt=0, le=500)
+    depth_cm: float = Field(..., gt=0, le=200)
+    door_clearance_cm: float = Field(0, ge=0, le=300)
+    in_stock: bool = True
+    description: str = Field("", max_length=2000)
+    image_url: str | None = Field(None, max_length=2000, description="Defaults to the generated thumbnail")
+
+
+class CatalogUpsertResponse(BaseModel):
+    upserted: int
+    reindexed: int
+    catalog_rows: int
+    unknown_categories: list[str] = Field(description="Categories the layout solver does not use (still searchable)")
+
+
+class ReindexResponse(BaseModel):
+    indexed: int
+    collection: str
+    embedding_backend: str
 
 
 class SearchRequest(BaseModel):

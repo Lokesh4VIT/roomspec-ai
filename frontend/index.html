@@ -48,10 +48,25 @@
     details > summary { list-style: none; cursor: pointer; }
     details > summary::-webkit-details-marker { display: none; }
     details[open] .chev { transform: rotate(90deg); }
+    .seg input:checked + span { background: #1c1917; color: #f6f3ee; border-color: #1c1917; }
+    .seg input:focus-visible + span { outline: 2px solid #b4532a; outline-offset: 2px; }
+    .print-only { display: none; }
+    @media print {
+      @page { size: A4; margin: 12mm; }
+      body { background: #fff !important; font-size: 11px; }
+      header, footer, #spec-form, #empty-state, #loading, .no-print { display: none !important; }
+      main { display: block !important; padding: 0 !important; max-width: none !important; }
+      .print-only { display: block !important; }
+      #output > section, #output > div { break-inside: avoid; margin-bottom: 10px; }
+      #output section { border-color: #d6d3d1 !important; }
+      .overflow-x-auto { overflow: visible !important; }
+      #output svg[role="img"] { min-width: 0 !important; max-height: 300px !important; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
   </style>
 </head>
 <body class="font-sans text-ink antialiased">
-  <header class="border-b border-rule bg-paper/90 backdrop-blur sticky top-0 z-20">
+  <header class="no-print border-b border-rule bg-paper/90 backdrop-blur sticky top-0 z-20">
     <div class="mx-auto max-w-[1400px] px-5 h-14 flex items-center gap-4">
       <div class="flex items-center gap-2.5">
         <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="14" width="26" height="15" fill="#b4532a"/><rect x="3" y="3" width="26" height="8" fill="#1c1917"/></svg>
@@ -118,6 +133,19 @@
             <option value="">Match the photo / style</option>
           </select>
         </label>
+        <fieldset>
+          <legend class="text-xs text-ink-soft">When the budget can't cover everything</legend>
+          <div class="mt-1 grid grid-cols-2 gap-2 text-sm">
+            <label class="seg cursor-pointer" title="Use as much of the wall as possible, then add upper cabinets with what's left">
+              <input type="radio" name="layout_priority" value="fill_width" checked class="sr-only" />
+              <span class="block rounded-md border border-rule px-3 py-2 text-center transition-colors">Fill the wall</span>
+            </label>
+            <label class="seg cursor-pointer" title="Prefer a shorter run that includes upper cabinets over it">
+              <input type="radio" name="layout_priority" value="complete_kitchen" class="sr-only" />
+              <span class="block rounded-md border border-rule px-3 py-2 text-center transition-colors">Complete kitchen</span>
+            </label>
+          </div>
+        </fieldset>
         <label class="block">
           <span class="text-xs text-ink-soft">Style intent</span>
           <input id="style_prompt" type="text" maxlength="300" placeholder="e.g. warm mid-century wood, minimal handles" class="mt-1 w-full rounded-md border border-rule px-3 py-2 outline-none focus:border-ink placeholder:text-ink-faint" />
@@ -144,6 +172,14 @@
         </details>
       </section>
 
+      <section id="api-key-section" class="hidden rounded-lg border border-clay bg-clay-tint p-4">
+        <label class="block">
+          <span class="text-sm font-medium">API key required</span>
+          <span class="block text-xs text-ink-soft mt-0.5">This server requires a key. It is saved in this browser only.</span>
+          <input id="api-key" type="password" autocomplete="off" class="mt-2 w-full rounded-md border border-rule bg-white px-3 py-2 font-mono text-sm outline-none focus:border-ink" />
+        </label>
+      </section>
+
       <button id="submit" type="submit" class="w-full rounded-md bg-clay text-white font-medium py-3 hover:bg-clay-dark transition-colors disabled:opacity-60 disabled:cursor-wait">
         Generate specification
       </button>
@@ -161,6 +197,10 @@
           <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">03</span><p class="font-medium mt-1">Enforce physics</p><p class="text-ink-soft mt-1">SQL filters width, depth, clearance and stock, then a solver fills the run within budget.</p></li>
           <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">04</span><p class="font-medium mt-1">Write the spec</p><p class="text-ink-soft mt-1">An LLM writes the install notes from verified rows only. Any unverifiable output is rejected.</p></li>
         </ol>
+        <div id="recent" class="hidden mt-10">
+          <h2 class="text-xs font-mono uppercase tracking-widest text-ink-soft">Recent specifications</h2>
+          <ul id="recent-list" class="mt-3 grid gap-2 sm:grid-cols-2"></ul>
+        </div>
       </div>
 
       <div id="loading" class="hidden rounded-lg border border-rule bg-white p-8">
@@ -178,7 +218,7 @@
     </section>
   </main>
 
-  <footer class="mx-auto max-w-[1400px] px-5 pb-8 text-xs text-ink-faint">
+  <footer class="no-print mx-auto max-w-[1400px] px-5 pb-8 text-xs text-ink-faint">
     Prices, dimensions and stock come from the catalog database. Measure on site before you order.
   </footer>
 
