@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash-lite"
     llm_timeout_s: float = 20.0
 
+    # FIT feature: composite a chosen catalog module into the uploaded room photo.
+    # `none` disables the /fit route's provider call (it still 503s cleanly).
+    # Reuses `gemini_api_key` above rather than a second key.
+    fit_provider: Literal["auto", "gemini", "none"] = "auto"
+    gemini_image_model: str = "gemini-2.5-flash-image"  # verify against current Gemini docs
+    fit_timeout_s: float = 45.0
+
     # Retrieval / upload limits.
     vector_top_k: int = Field(default=40, ge=1, le=200)
     max_alternatives: int = Field(default=3, ge=0, le=7)
