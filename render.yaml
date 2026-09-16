@@ -10,9 +10,9 @@ services:
     healthCheckPath: /api/v1/health
     envVars:
       - key: WITH_CLIP
-        value: "false"
+        value: "true"
       - key: EMBEDDING_BACKEND
-        value: hash
+        value: clip
       - key: DATABASE_URL
         sync: false
       - key: QDRANT_URL
