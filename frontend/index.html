@@ -193,7 +193,7 @@
         <h1 class="mt-2 text-2xl md:text-3xl font-semibold tracking-tight max-w-xl">A cabinet run that fits the wall, the budget and the look, with every part number checked.</h1>
         <ol class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4 text-sm">
           <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">01</span><p class="font-medium mt-1">Read the photo</p><p class="text-ink-soft mt-1">OpenCV evens out lighting and finds the floor line, the wall corner and the camera tilt.</p></li>
-          <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">02</span><p class="font-medium mt-1">Match the style</p><p class="text-ink-soft mt-1">CLIP embeddings search Qdrant for modules that look like the room and your brief.</p></li>
+          <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">02</span><p class="font-medium mt-1">Match the style</p><p class="text-ink-soft mt-1" id="style-match-copy">Wall colour and your brief are matched against the catalog.</p></li>
           <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">03</span><p class="font-medium mt-1">Enforce physics</p><p class="text-ink-soft mt-1">SQL filters width, depth, clearance and stock, then a solver fills the run within budget.</p></li>
           <li class="rounded-md bg-white/80 border border-rule p-4"><span class="font-mono text-xs text-ink-faint">04</span><p class="font-medium mt-1">Write the spec</p><p class="text-ink-soft mt-1">An LLM writes the install notes from verified rows only. Any unverifiable output is rejected.</p></li>
         </ol>
@@ -221,6 +221,17 @@
   <footer class="no-print mx-auto max-w-[1400px] px-5 pb-8 text-xs text-ink-faint">
     Prices, dimensions and stock come from the catalog database. Measure on site before you order.
   </footer>
+
+  <!-- FIT preview modal (new) -->
+  <div id="fit-modal" class="hidden fixed inset-0 z-30 grid place-items-center bg-ink/60 p-4" role="dialog" aria-modal="true" aria-labelledby="fit-modal-title">
+    <div class="max-w-2xl w-full rounded-lg bg-white p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 id="fit-modal-title" class="text-sm font-semibold">FIT preview</h2>
+        <button type="button" id="fit-modal-close" class="rounded-md border border-rule px-2 py-1 text-xs hover:border-ink">Close</button>
+      </div>
+      <div id="fit-modal-body" class="min-h-[200px] grid place-items-center text-sm text-ink-soft">Generating…</div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>
