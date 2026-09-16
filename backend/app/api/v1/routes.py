@@ -1,10 +1,9 @@
-"""FastAPI v1 routers: health, catalog, search, spec (image + constraints) and BOM."""
+"""FastAPI v1 routers: health, catalog, search, spec (image + constraints), BOM and FIT."""
 
 from __future__ import annotations
 
 import json
 import logging
-from html import escape
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Path, Query, Response, UploadFile, status
@@ -12,9 +11,9 @@ from pydantic import ValidationError
 
 from app import __version__
 from app.core.config import get_settings
-from app.core.finishes import swatch_rgb
 from app.core.metrics import registry
 from app.core.security import rate_limit, require_admin_key, require_api_key
+from app.core.thumbnails import render_module_svg
 from app.db import postgres, qdrant, spec_store
 from app.schemas.spec import (
     CatalogItem,
@@ -29,6 +28,7 @@ from app.schemas.spec import (
     SpecResponse,
     SpecRunSummary,
 )
+from app.services import fit_composer
 from app.services.cv_preprocessor import ImageValidationError
 from app.services.embedding_engine import get_embedder
 from app.services.genai_bom import _provider
@@ -117,35 +117,7 @@ def module_thumbnail(part_id: str) -> Response:
     row = postgres.get_modules_by_ids([part_id]).get(part_id)
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown part_id {part_id!r}")
-    rgb = swatch_rgb(row["finish_style"])
-    fill = "#{:02x}{:02x}{:02x}".format(*rgb)
-    stroke = "#1f2937" if sum(rgb) > 300 else "#e5e7eb"
-    w, h = row["width_cm"], row["height_cm"]
-    scale = 110 / max(w, h)
-    sw, sh = w * scale, max(h * scale, 6)
-    x, y = (120 - sw) / 2, (120 - sh) / 2
-    inner = ""
-    cat = row["category"]
-    if cat == "Drawer Base":
-        inner = "".join(
-            f'<line x1="{x}" y1="{y + sh * i / 3}" x2="{x + sw}" y2="{y + sh * i / 3}" stroke="{stroke}" stroke-width="1.5"/>'
-            f'<rect x="{x + sw / 2 - 8}" y="{y + sh * i / 3 + 5}" width="16" height="3" rx="1.5" fill="{stroke}"/>'
-            for i in range(3)
-        )
-    elif cat not in ("Countertop", "Filler Panel"):
-        doors = 2 if w >= 60 else 1
-        for d in range(doors):
-            dx = x + sw * d / doors
-            inner += f'<rect x="{dx + 3}" y="{y + 3}" width="{sw / doors - 6}" height="{sh - 6}" fill="none" stroke="{stroke}" stroke-width="1.2"/>'
-            hx = dx + sw / doors - 9 if doors == 1 or d == 0 else dx + 6
-            inner += (
-                f'<rect x="{hx}" y="{y + sh * 0.2}" width="3" height="{min(18, sh * 0.25)}" rx="1.5" fill="{stroke}"/>'
-            )
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="{escape(row["part_name"])}">'
-        f'<rect x="{x}" y="{y}" width="{sw}" height="{sh}" rx="2" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>'
-        f"{inner}</svg>"
-    )
+    svg = render_module_svg(row)
     return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
 
@@ -232,6 +204,41 @@ def get_spec(request_id: Annotated[str, Path(pattern=r"^[0-9a-f]{12,32}$")]) -> 
     if spec is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No saved specification {request_id!r}")
     return spec
+
+
+# --------------------------------------------------------------------------- fit (new)
+@router.post("/fit", tags=["fit"], dependencies=compute)
+def fit(
+    part_id: Annotated[str, Form(description="Catalog part_id to insert into the photo")],
+    image: Annotated[UploadFile, File(description="The original room photo, re-sent by the browser")],
+) -> Response:
+    """Composite a chosen catalog module into the caller's room photo.
+
+    The photo is NOT read from a saved spec: /spec never stores the original
+    image (see `save_specs` / spec_store notes), so the browser re-sends the
+    same file it already has in memory. See app/services/fit_composer.py for
+    the current limitations (schematic reference image, unverified provider
+    response shape).
+    """
+    if image.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"Unsupported image type {image.content_type!r}")
+    limit = int(get_settings().max_upload_mb * 1024 * 1024)
+    room_bytes = image.file.read(limit + 1)
+    if len(room_bytes) > limit:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"Image exceeds {get_settings().max_upload_mb} MB")
+
+    row = postgres.get_modules_by_ids([part_id]).get(part_id)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown part_id {part_id!r}")
+
+    try:
+        result_png = fit_composer.compose_fit(room_bytes, row)
+    except fit_composer.FitUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except fit_composer.FitError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+    return Response(result_png, media_type="image/png")
 
 
 # --------------------------------------------------------------------------- admin
