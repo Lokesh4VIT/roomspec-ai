@@ -9,8 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/opt/hf-cache \
     PORT=8000
 
+# libcairo2 is required by cairosvg (used by the FIT feature to rasterize
+# catalog SVG thumbnails before sending them to an image-editing API).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libglib2.0-0 curl \
+ && apt-get install -y --no-install-recommends libglib2.0-0 libcairo2 curl \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
