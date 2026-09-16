@@ -17,6 +17,7 @@
     const facets = loadFacets();
     loadSamples();
     bindUpload();
+    bindFitModal();
     $('spec-form').addEventListener('submit', onSubmit);
     $('api-key').value = storage.get('roomspec.apiKey') || '';
     $('api-key').addEventListener('change', () => storage.set('roomspec.apiKey', $('api-key').value.trim()));
@@ -116,6 +117,14 @@
       el.innerHTML = `<span class="h-1.5 w-1.5 rounded-full ${ok ? 'bg-pass' : 'bg-warn'}"></span>` +
         `${h.catalog_rows} parts · ${esc(h.embedding_backend)} · llm:${esc(h.llm_provider)}`;
       el.title = `database: ${h.database}\nvector store: ${h.vector_store} (${h.vector_points} points)`;
+      // Make the "how it works" step 2 copy match what's actually running, instead of
+      // always claiming CLIP — this was misleading in hash-embedder deployments.
+      const styleCopy = $('style-match-copy');
+      if (styleCopy) {
+        styleCopy.textContent = h.embedding_backend === 'clip'
+          ? 'CLIP embeddings search Qdrant for modules that look like the room and your brief.'
+          : 'Wall colour and your brief are matched against the catalog (full visual matching is off in this deployment).';
+      }
     } catch {
       el.innerHTML = '<span class="h-1.5 w-1.5 rounded-full bg-fail"></span>API offline';
     }
@@ -258,7 +267,9 @@
       if (!res.ok) throw new Error(formatApiError(data));
       state.lastResult = data;
       $('api-key-section').classList.add('hidden');
-      render(data);
+      // state.file is intentionally NOT cleared here — FIT (below) re-sends the
+      // original photo, since the server never stores it (see spec_store notes).
+      render(data, { shared: false });
       // Every result is saved server-side, so the address bar becomes its share link.
       history.pushState(null, '', `?spec=${data.request_id}`);
     } catch (ex) {
@@ -318,7 +329,7 @@
       renderHeader(r),
       renderAlternatives(r),
       renderElevation(r),
-      renderBOM(r),
+      renderBOM(r, shared),
       `<div class="grid gap-5 xl:grid-cols-2">${renderNotes(r)}${renderCompliance(r)}</div>`,
       `<div class="no-print grid gap-5 xl:grid-cols-2">${renderAnalysis(r)}${renderTimings(r)}</div>`,
     ].join('');
@@ -333,6 +344,7 @@
       sel.value = btn.dataset.finish;
       $('spec-form').requestSubmit();
     }));
+    out.querySelectorAll('.fit-btn').forEach((btn) => btn.addEventListener('click', () => onFitClick(btn.dataset.partId)));
     if (window.matchMedia('(max-width: 1023px)').matches) out.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -528,10 +540,13 @@
     </section>`;
   }
 
-  function renderBOM(r) {
+  function renderBOM(r, shared) {
     if (!r.bom.length) {
       return `<section class="rounded-lg border border-rule bg-white p-5"><h2 class="text-sm font-semibold">Bill of materials</h2><p class="mt-2 text-sm text-ink-soft">No parts selected.</p></section>`;
     }
+    // FIT re-sends the original photo (the server never stores it), so it only
+    // works right after a fresh /spec run in this tab — not on a reopened share link.
+    const canFit = !shared && !!state.file;
     const rows = r.bom.map((l) => `
       <tr class="border-t border-rule align-top">
         <td class="py-2.5 pl-5 pr-2 font-mono text-xs text-ink-faint num">${l.line}</td>
@@ -545,7 +560,12 @@
         <td class="py-2.5 pr-3 font-mono text-xs num whitespace-nowrap">${l.width_cm} × ${l.height_cm} × ${l.depth_cm}</td>
         <td class="py-2.5 pr-3 font-mono num text-right">${l.quantity}</td>
         <td class="py-2.5 pr-3 font-mono num text-right whitespace-nowrap">${usd(l.unit_price_usd)}</td>
-        <td class="py-2.5 pr-5 font-mono num text-right whitespace-nowrap">${usd(l.line_total_usd)}</td>
+        <td class="py-2.5 pr-3 font-mono num text-right whitespace-nowrap">${usd(l.line_total_usd)}</td>
+        <td class="py-2.5 pr-5 text-right whitespace-nowrap">
+          ${canFit
+            ? `<button type="button" class="fit-btn no-print rounded-md border border-ink px-2 py-1 text-xs font-medium hover:bg-ink hover:text-paper" data-part-id="${esc(l.part_id)}">FIT</button>`
+            : `<span class="no-print text-xs text-ink-faint" title="FIT needs the original photo from this session">FIT unavailable</span>`}
+        </td>
       </tr>`).join('');
     return `
     <section class="rounded-lg border border-rule bg-white">
@@ -564,14 +584,15 @@
               <th class="py-2 pl-5 pr-2 font-medium">#</th><th class="py-2 pr-3"><span class="sr-only">Preview</span></th>
               <th class="py-2 pr-3 font-medium">Part</th><th class="py-2 pr-3 font-medium">Category</th>
               <th class="py-2 pr-3 font-medium whitespace-nowrap">W × H × D (cm)</th><th class="py-2 pr-3 font-medium text-right">Qty</th>
-              <th class="py-2 pr-3 font-medium text-right">Unit</th><th class="py-2 pr-5 font-medium text-right">Total</th>
+              <th class="py-2 pr-3 font-medium text-right">Unit</th><th class="py-2 pr-3 font-medium text-right">Total</th>
+              <th class="py-2 pr-5 font-medium text-right no-print"><span class="sr-only">FIT</span></th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
           <tfoot>
             <tr class="border-t-2 border-ink">
               <td colspan="7" class="py-3 pl-5 text-right text-sm font-medium">Total</td>
-              <td class="py-3 pr-5 text-right font-mono num font-medium">${usd(r.total_usd)}</td>
+              <td class="py-3 pr-5 text-right font-mono num font-medium" colspan="2">${usd(r.total_usd)}</td>
             </tr>
           </tfoot>
         </table>
@@ -656,6 +677,42 @@
       <div class="mt-3">${bars}</div>
       <p class="mt-3 text-xs text-ink-faint font-mono">request ${esc(r.request_id)}</p>
     </section>`;
+  }
+
+  // ------------------------------------------------------------------ FIT (new)
+  function bindFitModal() {
+    $('fit-modal-close').addEventListener('click', hideFitModal);
+    $('fit-modal').addEventListener('click', (e) => { if (e.target.id === 'fit-modal') hideFitModal(); });
+  }
+
+  function showFitModal(bodyHtml) {
+    $('fit-modal-body').innerHTML = bodyHtml;
+    $('fit-modal').classList.remove('hidden');
+  }
+
+  function hideFitModal() {
+    $('fit-modal').classList.add('hidden');
+  }
+
+  async function onFitClick(partId) {
+    if (!state.file) return; // button is hidden in this case, but guard anyway
+    showFitModal('<p>Generating…</p>');
+    const body = new FormData();
+    body.append('image', state.file);
+    body.append('part_id', partId);
+    try {
+      const res = await apiFetch('/fit', { method: 'POST', body });
+      if (!res.ok) {
+        let msg = 'Could not generate a FIT preview.';
+        try { msg = formatApiError(await res.json()); } catch { /* non-JSON error body */ }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      showFitModal(`<img src="${url}" alt="Room with ${esc(partId)} fitted in" class="max-h-[70vh] w-auto rounded-md" />`);
+    } catch (ex) {
+      showFitModal(`<p class="text-fail">${esc(ex.message || 'FIT failed.')}</p>`);
+    }
   }
 
   // ------------------------------------------------------------------ export
